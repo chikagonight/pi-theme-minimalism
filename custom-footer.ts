@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import type { AssistantMessage } from '@earendil-works/pi-ai';
 import type { ExtensionAPI, ThemeColor } from '@earendil-works/pi-coding-agent';
 import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
-import { fmt, formatCwd, countEnabledMcpServers, countConnectedMcp, resolveFooterColors, FOREGROUND_THEME_TOKENS } from './custom-theme-minimalism/helpers.ts';
+import { fmt, formatCwd, countEnabledMcpServers, countConnectedMcp, resolveFooterColors, FOREGROUND_THEME_TOKENS } from './theme-minimalism-pi/helpers.ts';
 
 const validTokens = new Set(FOREGROUND_THEME_TOKENS);
 
@@ -49,7 +49,7 @@ export default function (pi: ExtensionAPI) {
             }
           }
 
-          const colors = resolveFooterColors(readColorConfig(join(home, '.pi/agent/custom-theme-minimalism/colors.json')), validTokens);
+          const colors = resolveFooterColors(readColorConfig(join(home, '.pi/agent/theme-minimalism-pi/colors.json')), validTokens);
           const paint = (key: keyof typeof colors, text: string): string => {
             const color = colors[key];
             return color.kind === 'token' ? theme.fg(color.token as ThemeColor, text) : theme.style(text, { fg: color.color });

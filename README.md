@@ -1,4 +1,4 @@
-# custom-theme-minimalism
+# theme-minimalism-pi
 
 Минималистичный кастомный футер для [Pi](https://pi.dev) (`@earendil-works/pi-coding-agent`):
 каталог + git-ветка слева, токены сессии / использование контекста / статус MCP-серверов справа.
@@ -22,14 +22,14 @@
 
 ```bash
 ln -s "$(pwd)/custom-footer.ts" ~/.pi/agent/extensions/custom-footer.ts
-ln -s "$(pwd)/custom-theme-minimalism" ~/.pi/agent/extensions/custom-theme-minimalism
+ln -s "$(pwd)/theme-minimalism-pi" ~/.pi/agent/extensions/theme-minimalism-pi
 ```
 
 Футер активируется автоматически при старте Pi (`session_start`), без команды.
 
 ## Настройка цвета
 
-Создайте (не коммитьте) файл `~/.pi/agent/custom-theme-minimalism/colors.json` — все поля опциональны,
+Создайте (не коммитьте) файл `~/.pi/agent/theme-minimalism-pi/colors.json` — все поля опциональны,
 значение — либо имя foreground-токена активной темы Pi (`dim`, `muted`, `text`, `accent`, `success`,
 `error`, ...), либо hex-цвет `"#rgb"`/`"#rrggbb"`:
 
@@ -51,8 +51,8 @@ ln -s "$(pwd)/custom-theme-minimalism" ~/.pi/agent/extensions/custom-theme-minim
 ## Разработка
 
 Чистая логика (форматирование чисел, цветов, подсчёт MCP-серверов) вынесена в
-`custom-theme-minimalism/helpers.ts` и покрыта тестами на `node:test`:
+`theme-minimalism-pi/helpers.ts` и покрыта тестами на `node:test`:
 
 ```bash
-node --test custom-theme-minimalism/custom-footer.test.mjs
+node --test theme-minimalism-pi/custom-footer.test.mjs
 ```
