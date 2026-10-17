@@ -22,14 +22,14 @@
 
 ```bash
 ln -s "$(pwd)/custom-footer.ts" ~/.pi/agent/extensions/custom-footer.ts
-ln -s "$(pwd)/custom-footer-support" ~/.pi/agent/extensions/custom-footer-support
+ln -s "$(pwd)/custom-theme-minimalism" ~/.pi/agent/extensions/custom-theme-minimalism
 ```
 
 Футер активируется автоматически при старте Pi (`session_start`), без команды.
 
 ## Настройка цвета
 
-Создайте (не коммитьте) файл `~/.pi/agent/custom-footer-support/colors.json` — все поля опциональны,
+Создайте (не коммитьте) файл `~/.pi/agent/custom-theme-minimalism/colors.json` — все поля опциональны,
 значение — либо имя foreground-токена активной темы Pi (`dim`, `muted`, `text`, `accent`, `success`,
 `error`, ...), либо hex-цвет `"#rgb"`/`"#rrggbb"`:
 
@@ -51,8 +51,8 @@ ln -s "$(pwd)/custom-footer-support" ~/.pi/agent/extensions/custom-footer-suppor
 ## Разработка
 
 Чистая логика (форматирование чисел, цветов, подсчёт MCP-серверов) вынесена в
-`custom-footer-support/helpers.ts` и покрыта тестами на `node:test`:
+`custom-theme-minimalism/helpers.ts` и покрыта тестами на `node:test`:
 
 ```bash
-node --test custom-footer-support/custom-footer.test.mjs
+node --test custom-theme-minimalism/custom-footer.test.mjs
 ```
