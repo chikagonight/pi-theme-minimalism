@@ -3,8 +3,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { AssistantMessage } from '@earendil-works/pi-ai';
 import type { ExtensionAPI, ThemeColor } from '@earendil-works/pi-coding-agent';
-import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
-import { fmt, formatCwd, countEnabledMcpServers, countConnectedMcp, resolveFooterColors, FOREGROUND_THEME_TOKENS } from './pi-theme-minimalism/helpers.ts';
+import { fmt, formatCwd, countEnabledMcpServers, countConnectedMcp, resolveFooterColors, composeFooterLines, FOREGROUND_THEME_TOKENS } from './pi-theme-minimalism/helpers.ts';
 
 const validTokens = new Set(FOREGROUND_THEME_TOKENS);
 
@@ -66,8 +65,8 @@ export default function (pi: ExtensionAPI) {
           const connected = countConnectedMcp(tools.map((tool) => tool.namespace?.name ?? ''), names);
           const right = blocks.join('  ') + (total === 0 ? '' : `  ${paint(connected === total ? 'mcpOk' : 'mcpBad', `MCP:${connected}/${total}`)}`);
 
-          const pad = ' '.repeat(Math.max(1, width - visibleWidth(left) - visibleWidth(right)));
-          return [truncateToWidth(left + pad + right, width)];
+          const center = ctx.model ? paint('model', ctx.model.name + (ctx.thinkingLevel ? ` · ${ctx.thinkingLevel}` : '')) : '';
+          return composeFooterLines(left, center, right, width);
         },
       };
     });

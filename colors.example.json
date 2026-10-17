@@ -1,6 +1,7 @@
 {
   "cwd": "muted",
   "branch": "muted",
+  "model": "accent",
   "tokens": "muted",
   "context": "muted",
   "mcpOk": "success",

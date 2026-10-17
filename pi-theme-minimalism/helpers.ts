@@ -1,4 +1,4 @@
-import type { Color } from '@earendil-works/pi-tui';
+import { truncateToWidth, visibleWidth, type Color } from '@earendil-works/pi-tui';
 
 // Foreground tokens from pi-coding-agent's theme-tokens.ts — update if Pi adds new tokens.
 export const FOREGROUND_THEME_TOKENS: readonly string[] = [
@@ -14,9 +14,9 @@ export const FOREGROUND_THEME_TOKENS: readonly string[] = [
   'thinkingMedium', 'thinkingHigh', 'thinkingXhigh', 'thinkingMax', 'bashMode',
 ];
 
-export type FooterColorKey = 'cwd' | 'branch' | 'tokens' | 'context' | 'mcpOk' | 'mcpBad';
+export type FooterColorKey = 'cwd' | 'branch' | 'model' | 'tokens' | 'context' | 'mcpOk' | 'mcpBad';
 export const DEFAULT_FOOTER_COLORS: Record<FooterColorKey, string> = {
-  cwd: 'dim', branch: 'dim', tokens: 'dim', context: 'dim', mcpOk: 'success', mcpBad: 'error',
+  cwd: 'dim', branch: 'dim', model: 'accent', tokens: 'dim', context: 'dim', mcpOk: 'success', mcpBad: 'error',
 };
 
 type ResolvedColor = { kind: 'token'; token: string } | { kind: 'hex'; color: Color };
@@ -46,6 +46,22 @@ export function resolveFooterColors(rawConfig: unknown, validTokens: ReadonlySet
     else throw new Error(`Invalid default footer color: ${key}`);
   }
   return colors;
+}
+
+export function composeFooterLines(left: string, center: string, right: string, width: number): string[] {
+  const leftWidth = visibleWidth(left);
+  const rightWidth = visibleWidth(right);
+  // Preserve the pre-model footer's first line; clipping left/right in extremely narrow terminals is outside this feature's scope.
+  const firstLine = () => truncateToWidth(left + ' '.repeat(Math.max(1, width - leftWidth - rightWidth)) + right, width);
+  if (!center) return [firstLine()];
+
+  const centerWidth = visibleWidth(center);
+  const centerStart = Math.floor((width - centerWidth) / 2);
+  if (centerStart >= leftWidth + 2 && centerStart + centerWidth + 2 <= width - rightWidth) {
+    return [left + ' '.repeat(centerStart - leftWidth) + center
+      + ' '.repeat(width - rightWidth - centerStart - centerWidth) + right];
+  }
+  return [firstLine(), truncateToWidth(' '.repeat(Math.max(0, centerStart)) + center, width)];
 }
 
 export function fmt(n: number): string {
