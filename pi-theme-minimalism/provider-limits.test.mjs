@@ -1,6 +1,61 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { parseAnthropicLimits, parseAnthropicUnifiedLimits, parseOpenAILimits, mergeProviderLimits, mergeAnthropicUnifiedLimits, formatProviderLimitsLines, formatUnifiedLimitsLine } from './provider-limits.ts';
+import { parseAnthropicLimits, parseAnthropicUnifiedLimits, parseOpenAILimits, mergeProviderLimits, mergeAnthropicUnifiedLimits, formatProviderLimitsLines, formatUnifiedLimitsLine, fetchAnthropicUsage, fetchCodexUsage } from './provider-limits.ts';
+
+const mockFetch = (body, status = 200) => async (url, options) => {
+  assert.equal(options.method, 'GET');
+  assert.equal(options.headers.Authorization, 'Bearer test-token');
+  if (url.includes('anthropic.com')) assert.equal(options.headers['anthropic-beta'], 'oauth-2025-04-20');
+  return { ok: status === 200, status, json: async () => body };
+};
+
+test('fetchAnthropicUsage reads new limits and normalizes percentages and resets', async () => {
+  assert.deepEqual(await fetchAnthropicUsage('test-token', mockFetch({ limits: [
+    { kind: 'session', percent: 5, resets_at: '2030-01-01T15:00:00Z' },
+    { kind: 'weekly_all', percent: 1, resets_at: 1893538800 },
+  ] })), { fiveHour: { utilization: 0.05, reset: 1893510000, status: 'allowed' }, sevenDay: { utilization: 0.01, reset: 1893538800, status: 'allowed' } });
+});
+
+test('fetchAnthropicUsage supports legacy windows and ignores invalid fields', async () => {
+  assert.deepEqual(await fetchAnthropicUsage('test-token', mockFetch({ five_hour: { utilization: 0.25, resets_at: '2030-01-01T15:00:00Z' }, seven_day: { utilization: 0 } })),
+    { fiveHour: { utilization: 0.25, reset: 1893510000, status: 'allowed' }, sevenDay: { utilization: 0, status: 'allowed' } });
+  assert.deepEqual(await fetchAnthropicUsage('test-token', mockFetch({ limits: [{ kind: 'session', percent: 150 }, { kind: 'weekly_scoped', percent: 10 }] })),
+    { sevenDay: { utilization: 0.1, status: 'allowed' } });
+});
+
+test('fetchCodexUsage reads primary and secondary windows without inventing counters', async () => {
+  const result = await fetchCodexUsage('test-token', mockFetch({ rate_limit: {
+    primary_window: { used_percent: 12.5, reset_at: 1893510000, limit_window_seconds: 18000 },
+    secondary_window: { used_percent: 3, reset_at: 1893538800 },
+  } }));
+  assert.deepEqual(result, { primary: { percent: 12.5, reset: 1893510000 }, secondary: { percent: 3, reset: 1893538800 } });
+  const formatted = formatProviderLimitsLines(new Map([['openai-codex', { requests: { remaining: 4, limit: 5 } }]]), new Map(), new Map([['openai-codex', result]]));
+  assert.match(formatted[0], /^openai-codex req 4\/5 · 5h:13%\(сброс \d{2}:\d{2}\) · 7d:3%\(сброс \d{2}:\d{2} \d{2}\.\d{2}\)$/);
+});
+
+test('Codex duration reset and active-only provider lines', async () => {
+  const originalNow = Date.now;
+  Date.now = () => 1893510000000;
+  try {
+    const usage = await fetchCodexUsage('test-token', mockFetch({ rate_limit: { primary_window: { used_percent: 0, reset_after_seconds: 60 } } }));
+    assert.deepEqual(usage, { primary: { percent: 0, reset: 1893510060 } });
+    const lines = formatProviderLimitsLines(new Map(), new Map([['anthropic', { fiveHour: { utilization: 0.05 } }]]), new Map([['openai-codex', usage]]));
+    assert.equal(lines[0], 'anthropic 5h:5%');
+    assert.match(lines[1], /^openai-codex 5h:0%\(сброс \d{2}:\d{2}\)$/);
+  } finally { Date.now = originalNow; }
+});
+
+test('usage fetches fail quietly on network errors, 401, invalid JSON and missing fields', async () => {
+  for (const fetcher of [fetchAnthropicUsage, fetchCodexUsage]) {
+    assert.equal(await fetcher('test-token', async () => { throw new Error('offline'); }), undefined);
+    assert.equal(await fetcher('test-token', mockFetch({}, 401)), undefined);
+    assert.equal(await fetcher('test-token', mockFetch({}, 403)), undefined);
+    assert.equal(await fetcher('test-token', async () => ({ ok: true, json: async () => { throw new SyntaxError('bad JSON'); } })), undefined);
+    assert.equal(await fetcher('test-token', mockFetch({})), undefined);
+    assert.equal(await fetcher('test-token', mockFetch(null)), undefined);
+  }
+  assert.deepEqual(await fetchCodexUsage('test-token', mockFetch({ rate_limit: { primary_window: { used_percent: -1 }, secondary_window: { used_percent: 0 } } })), { secondary: { percent: 0 } });
+});
 
 test('parseAnthropicLimits reads complete request and token limits with ISO resets', () => {
   assert.deepEqual(parseAnthropicLimits({

@@ -8,7 +8,82 @@ export type AnthropicUnifiedLimits = {
   sevenDay?: { utilization: number; reset?: number; status?: string };
 };
 
+export type CodexUsageLimits = {
+  primary?: { percent: number; reset?: number };
+  secondary?: { percent: number; reset?: number };
+};
+
 type UnifiedWindow = NonNullable<AnthropicUnifiedLimits['fiveHour']>;
+
+function resetSeconds(value: unknown): number | undefined {
+  const seconds = typeof value === 'number' ? value : typeof value === 'string' ? Date.parse(value) / 1000 : NaN;
+  return Number.isFinite(seconds) && seconds >= 0 && Number.isFinite(new Date(seconds * 1000).getTime()) ? seconds : undefined;
+}
+
+function record(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+}
+
+function percentage(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 100 ? value : undefined;
+}
+
+function anthroWindow(value: unknown, modern: boolean): UnifiedWindow | undefined {
+  const data = record(value);
+  const used = modern ? percentage(data?.percent) : percentage(typeof data?.utilization === 'number' ? data.utilization * 100 : undefined);
+  if (used === undefined) return undefined;
+  const reset = resetSeconds(data?.resets_at);
+  return { utilization: used / 100, ...(reset !== undefined && { reset }), status: 'allowed' };
+}
+
+export async function fetchAnthropicUsage(accessToken: string, fetchImpl: typeof fetch = fetch): Promise<AnthropicUnifiedLimits | undefined> {
+  try {
+    const response = await fetchImpl('https://api.anthropic.com/api/oauth/usage', {
+      method: 'GET', headers: { Authorization: `Bearer ${accessToken}`, 'anthropic-beta': 'oauth-2025-04-20' },
+    });
+    if (!response.ok) return undefined;
+    const data = record(await response.json());
+    if (!data) return undefined;
+    let fiveHour: UnifiedWindow | undefined;
+    let sevenDay: UnifiedWindow | undefined;
+    if (Array.isArray(data.limits)) {
+      for (const item of data.limits) {
+        const limit = record(item);
+        if (limit?.kind === 'session') fiveHour = anthroWindow(limit, true) ?? fiveHour;
+        else if (limit?.kind === 'weekly_all' || (typeof limit?.kind === 'string' && limit.kind.startsWith('weekly'))) {
+          if (!sevenDay || limit.kind === 'weekly_all') sevenDay = anthroWindow(limit, true) ?? sevenDay;
+        }
+      }
+    } else {
+      fiveHour = anthroWindow(data.five_hour, false);
+      sevenDay = anthroWindow(data.seven_day, false) ?? anthroWindow(data.seven_day_opus, false) ?? anthroWindow(data.seven_day_sonnet, false);
+    }
+    return fiveHour || sevenDay ? { ...(fiveHour && { fiveHour }), ...(sevenDay && { sevenDay }) } : undefined;
+  } catch { return undefined; }
+}
+
+function codexWindow(value: unknown): NonNullable<CodexUsageLimits['primary']> | undefined {
+  const data = record(value);
+  const percent = percentage(data?.used_percent);
+  if (percent === undefined) return undefined;
+  const reset = resetSeconds(data?.reset_at) ?? (typeof data?.reset_after_seconds === 'number' && Number.isFinite(data.reset_after_seconds) && data.reset_after_seconds >= 0
+    ? resetSeconds(Date.now() / 1000 + data.reset_after_seconds) : undefined);
+  return { percent, ...(reset !== undefined && { reset }) };
+}
+
+export async function fetchCodexUsage(accessToken: string, fetchImpl: typeof fetch = fetch): Promise<CodexUsageLimits | undefined> {
+  try {
+    const response = await fetchImpl('https://chatgpt.com/backend-api/wham/usage', {
+      method: 'GET', headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!response.ok) return undefined;
+    const limits = record(record(await response.json())?.rate_limit);
+    const primary = codexWindow(limits?.primary_window);
+    const secondary = codexWindow(limits?.secondary_window);
+    return primary || secondary ? { ...(primary && { primary }), ...(secondary && { secondary }) } : undefined;
+  } catch { return undefined; }
+}
+
 
 function parseUnifiedWindow(headers: Record<string, string>, window: '5h' | '7d'): UnifiedWindow | undefined {
   const prefix = `anthropic-ratelimit-unified-${window}-`;
@@ -87,9 +162,9 @@ export function mergeProviderLimits(previous: ProviderLimits | undefined, next: 
   };
 }
 
-export function formatProviderLimitsLines(limitsByProvider: Map<string, ProviderLimits>, unifiedByProvider: Map<string, AnthropicUnifiedLimits> = new Map()): string[] {
+export function formatProviderLimitsLines(limitsByProvider: Map<string, ProviderLimits>, unifiedByProvider: Map<string, AnthropicUnifiedLimits> = new Map(), codexByProvider: Map<string, CodexUsageLimits> = new Map()): string[] {
   const lines: string[] = [];
-  for (const provider of new Set([...limitsByProvider.keys(), ...unifiedByProvider.keys()])) {
+  for (const provider of new Set([...limitsByProvider.keys(), ...unifiedByProvider.keys(), ...codexByProvider.keys()])) {
     const limits = limitsByProvider.get(provider);
     const counters: string[] = [];
     if (limits?.requests) counters.push(`req ${limits.requests.remaining}/${limits.requests.limit}`);
@@ -97,6 +172,12 @@ export function formatProviderLimitsLines(limitsByProvider: Map<string, Provider
     const unified = unifiedByProvider.get(provider);
     const unifiedLine = unified ? formatUnifiedLimitsLine(provider, unified) : '';
     if (unifiedLine) counters.push(unifiedLine.slice(provider.length + 1));
+    const codex = codexByProvider.get(provider);
+    for (const [label, window] of [['5h', codex?.primary], ['7d', codex?.secondary]] as const) {
+      if (!window) continue;
+      const formatted = formatUnifiedLimitsLine(provider, { [label === '5h' ? 'fiveHour' : 'sevenDay']: { utilization: window.percent / 100, reset: window.reset } });
+      counters.push(formatted.slice(provider.length + 1));
+    }
     if (counters.length) lines.push(`${provider} ${counters.join(' · ')}`);
   }
   return lines;

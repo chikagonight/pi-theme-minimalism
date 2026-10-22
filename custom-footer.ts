@@ -3,9 +3,9 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { AssistantMessage } from '@earendil-works/pi-ai';
 import { truncateToWidth } from '@earendil-works/pi-tui';
-import type { ExtensionAPI, ThemeColor } from '@earendil-works/pi-coding-agent';
+import { readStoredCredential, type ExtensionAPI, type ThemeColor } from '@earendil-works/pi-coding-agent';
 import { fmt, formatCwd, countEnabledMcpServers, countConnectedMcp, resolveFooterColors, composeFooterLines, FOREGROUND_THEME_TOKENS } from './pi-theme-minimalism/helpers.ts';
-import { parseAnthropicLimits, parseAnthropicUnifiedLimits, parseOpenAILimits, mergeProviderLimits, mergeAnthropicUnifiedLimits, formatProviderLimitsLines, type ProviderLimits, type AnthropicUnifiedLimits } from './pi-theme-minimalism/provider-limits.ts';
+import { parseAnthropicLimits, parseAnthropicUnifiedLimits, parseOpenAILimits, mergeProviderLimits, mergeAnthropicUnifiedLimits, formatProviderLimitsLines, fetchAnthropicUsage, fetchCodexUsage, type ProviderLimits, type AnthropicUnifiedLimits, type CodexUsageLimits } from './pi-theme-minimalism/provider-limits.ts';
 
 const validTokens = new Set(FOREGROUND_THEME_TOKENS);
 
@@ -41,7 +41,34 @@ export default function (pi: ExtensionAPI) {
     const home = homedir();
     const limitsByProvider = new Map<string, ProviderLimits>();
     const unifiedByProvider = new Map<string, AnthropicUnifiedLimits>();
+    const codexByProvider = new Map<string, CodexUsageLimits>();
     let requestWidgetRender: (() => void) | undefined;
+    // A slow startup request must not replace limits already seen in a model response.
+    let anthropicUpdated = false;
+    let codexUpdated = false;
+    const loadUsage = async () => {
+      await Promise.all((['anthropic', 'openai-codex'] as const).map(async (provider) => {
+        try {
+          const credential = readStoredCredential(provider);
+          if (credential?.type !== 'oauth') return;
+          if (provider === 'anthropic') {
+            const usage = await fetchAnthropicUsage(credential.access);
+            if (usage) {
+              unifiedByProvider.set(provider, anthropicUpdated
+                ? mergeAnthropicUnifiedLimits(usage, unifiedByProvider.get(provider)!) : usage);
+              requestWidgetRender?.();
+            }
+          } else {
+            const usage = await fetchCodexUsage(credential.access);
+            if (usage && !codexUpdated) {
+              codexByProvider.set(provider, usage);
+              requestWidgetRender?.();
+            }
+          }
+        } catch { /* Missing or unreadable credentials must not affect the footer. */ }
+      }));
+    };
+    void loadUsage();
     unsubscribeProviderResponse = pi.on('after_provider_response', (event, responseCtx) => {
       const providerId = responseCtx.model?.provider;
       if (!providerId) return;
@@ -50,7 +77,11 @@ export default function (pi: ExtensionAPI) {
         : parseAnthropicLimits(event.headers) ?? parseOpenAILimits(event.headers);
       const unified = providerId === 'anthropic' ? parseAnthropicUnifiedLimits(event.headers) : undefined;
       if (limits) limitsByProvider.set(providerId, mergeProviderLimits(limitsByProvider.get(providerId), limits));
-      if (unified) unifiedByProvider.set(providerId, mergeAnthropicUnifiedLimits(unifiedByProvider.get(providerId), unified));
+      if (unified) {
+        anthropicUpdated = true;
+        unifiedByProvider.set(providerId, mergeAnthropicUnifiedLimits(unifiedByProvider.get(providerId), unified));
+      }
+      if (providerId === 'openai-codex' && limits) codexUpdated = true;
       if (limits || unified) requestWidgetRender?.();
     });
     ctx.ui.setWidget('provider-limits', (tui, theme) => {
@@ -59,7 +90,7 @@ export default function (pi: ExtensionAPI) {
         dispose() { requestWidgetRender = undefined; },
         invalidate() {},
         render(width: number): string[] {
-          const lines = formatProviderLimitsLines(limitsByProvider, unifiedByProvider);
+          const lines = formatProviderLimitsLines(limitsByProvider, unifiedByProvider, codexByProvider);
           if (lines.length === 0) return [];
           const colors = resolveFooterColors(readColorConfig(join(home, '.pi/agent/pi-theme-minimalism/colors.json')), validTokens);
           const color = colors.limitsProvider;
