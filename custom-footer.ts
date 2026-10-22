@@ -1,11 +1,11 @@
-import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { AssistantMessage } from '@earendil-works/pi-ai';
 import { truncateToWidth } from '@earendil-works/pi-tui';
 import type { ExtensionAPI, ThemeColor } from '@earendil-works/pi-coding-agent';
 import { fmt, formatCwd, countEnabledMcpServers, countConnectedMcp, resolveFooterColors, composeFooterLines, FOREGROUND_THEME_TOKENS } from './pi-theme-minimalism/helpers.ts';
-import { parseAnthropicLimits, parseOpenAILimits, mergeProviderLimits, formatProviderLimitsLines, type ProviderLimits } from './pi-theme-minimalism/provider-limits.ts';
+import { parseAnthropicLimits, parseAnthropicUnifiedLimits, parseOpenAILimits, mergeProviderLimits, mergeAnthropicUnifiedLimits, formatProviderLimitsLines, type ProviderLimits, type AnthropicUnifiedLimits } from './pi-theme-minimalism/provider-limits.ts';
 
 const validTokens = new Set(FOREGROUND_THEME_TOKENS);
 
@@ -40,6 +40,7 @@ export default function (pi: ExtensionAPI) {
 
     const home = homedir();
     const limitsByProvider = new Map<string, ProviderLimits>();
+    const unifiedByProvider = new Map<string, AnthropicUnifiedLimits>();
     let requestWidgetRender: (() => void) | undefined;
     unsubscribeProviderResponse = pi.on('after_provider_response', (event, responseCtx) => {
       const providerId = responseCtx.model?.provider;
@@ -47,19 +48,10 @@ export default function (pi: ExtensionAPI) {
       const limits = providerId === 'anthropic' ? parseAnthropicLimits(event.headers)
         : providerId === 'openai' ? parseOpenAILimits(event.headers)
         : parseAnthropicLimits(event.headers) ?? parseOpenAILimits(event.headers);
-      try {
-        const debugDir = join(home, '.pi/agent/pi-theme-minimalism');
-        mkdirSync(debugDir, { recursive: true });
-        appendFileSync(join(debugDir, 'debug-headers.log'), JSON.stringify({
-          timestamp: new Date().toISOString(), providerId, headers: event.headers,
-          limits: limits ?? 'undefined',
-        }) + '\n', { flag: 'a', mode: 0o600 });
-      } catch {
-        // Diagnostic logging must not interrupt provider-limit updates.
-      }
-      if (!limits) return;
-      limitsByProvider.set(providerId, mergeProviderLimits(limitsByProvider.get(providerId), limits));
-      requestWidgetRender?.();
+      const unified = providerId === 'anthropic' ? parseAnthropicUnifiedLimits(event.headers) : undefined;
+      if (limits) limitsByProvider.set(providerId, mergeProviderLimits(limitsByProvider.get(providerId), limits));
+      if (unified) unifiedByProvider.set(providerId, mergeAnthropicUnifiedLimits(unifiedByProvider.get(providerId), unified));
+      if (limits || unified) requestWidgetRender?.();
     });
     ctx.ui.setWidget('provider-limits', (tui, theme) => {
       requestWidgetRender = () => tui.requestRender();
@@ -67,7 +59,7 @@ export default function (pi: ExtensionAPI) {
         dispose() { requestWidgetRender = undefined; },
         invalidate() {},
         render(width: number): string[] {
-          const lines = formatProviderLimitsLines(limitsByProvider);
+          const lines = formatProviderLimitsLines(limitsByProvider, unifiedByProvider);
           if (lines.length === 0) return [];
           const colors = resolveFooterColors(readColorConfig(join(home, '.pi/agent/pi-theme-minimalism/colors.json')), validTokens);
           const color = colors.limitsProvider;

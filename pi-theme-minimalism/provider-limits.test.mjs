@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { parseAnthropicLimits, parseOpenAILimits, mergeProviderLimits, formatProviderLimitsLines } from './provider-limits.ts';
+import { parseAnthropicLimits, parseAnthropicUnifiedLimits, parseOpenAILimits, mergeProviderLimits, mergeAnthropicUnifiedLimits, formatProviderLimitsLines, formatUnifiedLimitsLine } from './provider-limits.ts';
 
 test('parseAnthropicLimits reads complete request and token limits with ISO resets', () => {
   assert.deepEqual(parseAnthropicLimits({
@@ -63,6 +63,90 @@ test('parseAnthropicLimits returns undefined for incomplete or wholly invalid pa
     'anthropic-ratelimit-tokens-remaining': '100',
     'anthropic-ratelimit-tokens-limit': 'bad',
   }), undefined);
+});
+
+test('parseAnthropicUnifiedLimits reads both subscription windows', () => {
+  assert.deepEqual(parseAnthropicUnifiedLimits({
+    'anthropic-ratelimit-unified-5h-utilization': '0.05',
+    'anthropic-ratelimit-unified-5h-reset': '1792686000',
+    'anthropic-ratelimit-unified-5h-status': 'allowed',
+    'anthropic-ratelimit-unified-7d-utilization': '0.0',
+    'anthropic-ratelimit-unified-7d-reset': '1793271600',
+    'anthropic-ratelimit-unified-7d-status': 'rejected',
+    'anthropic-ratelimit-unified-status': 'allowed',
+  }), {
+    fiveHour: { utilization: 0.05, reset: 1792686000, status: 'allowed' },
+    sevenDay: { utilization: 0, reset: 1793271600, status: 'rejected' },
+  });
+});
+
+test('parseAnthropicUnifiedLimits accepts 5h without optional reset or status', () => {
+  assert.deepEqual(parseAnthropicUnifiedLimits({
+    'anthropic-ratelimit-unified-5h-utilization': '1',
+  }), { fiveHour: { utilization: 1 } });
+});
+
+test('parseAnthropicUnifiedLimits accepts only 7d', () => {
+  assert.deepEqual(parseAnthropicUnifiedLimits({
+    'anthropic-ratelimit-unified-7d-utilization': '0',
+    'anthropic-ratelimit-unified-7d-reset': '1793271600',
+  }), { sevenDay: { utilization: 0, reset: 1793271600 } });
+});
+
+test('parseAnthropicUnifiedLimits ignores absent and aggregate-only headers', () => {
+  assert.equal(parseAnthropicUnifiedLimits({}), undefined);
+  assert.equal(parseAnthropicUnifiedLimits({ 'anthropic-ratelimit-unified-status': 'allowed' }), undefined);
+});
+
+test('parseAnthropicUnifiedLimits skips invalid utilization independently', () => {
+  for (const invalid of ['oops', '-0.1', '1.1', 'NaN', 'Infinity', '', '0x1']) {
+    assert.deepEqual(parseAnthropicUnifiedLimits({
+      'anthropic-ratelimit-unified-5h-utilization': invalid,
+      'anthropic-ratelimit-unified-7d-utilization': '0.25',
+    }), { sevenDay: { utilization: 0.25 } });
+    assert.equal(parseAnthropicUnifiedLimits({ 'anthropic-ratelimit-unified-5h-utilization': invalid }), undefined);
+  }
+});
+
+test('parseAnthropicUnifiedLimits skips an invalid reset window but retains the other', () => {
+  assert.deepEqual(parseAnthropicUnifiedLimits({
+    'anthropic-ratelimit-unified-5h-utilization': '0.05',
+    'anthropic-ratelimit-unified-5h-reset': 'not-a-number',
+    'anthropic-ratelimit-unified-7d-utilization': '0.25',
+  }), { sevenDay: { utilization: 0.25 } });
+  for (const reset of ['oops', '9999999999999999']) {
+    assert.equal(parseAnthropicUnifiedLimits({
+      'anthropic-ratelimit-unified-7d-utilization': '0.25',
+      'anthropic-ratelimit-unified-7d-reset': reset,
+    }), undefined);
+  }
+});
+
+test('formatUnifiedLimitsLine formats local reset time, and date only for a different day', () => {
+  const today = new Date();
+  const todayReset = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 15, 0).getTime() / 1000;
+  const laterReset = new Date(2040, 9, 23, 15, 0).getTime() / 1000;
+  assert.equal(formatUnifiedLimitsLine('anthropic', {
+    fiveHour: { utilization: 0.05, reset: todayReset, status: 'allowed' },
+    sevenDay: { utilization: 0, reset: laterReset, status: 'allowed' },
+  }), 'anthropic 5h:5%(сброс 15:00) 7d:0%(сброс 15:00 23.10)');
+  assert.equal(formatUnifiedLimitsLine('anthropic', { fiveHour: { utilization: 0.25 } }), 'anthropic 5h:25%');
+  assert.equal(formatUnifiedLimitsLine('anthropic', { sevenDay: { utilization: 0 } }), 'anthropic 7d:0%');
+  assert.equal(formatUnifiedLimitsLine('anthropic', {}), '');
+});
+
+test('mergeAnthropicUnifiedLimits retains the other window across partial responses', () => {
+  assert.deepEqual(mergeAnthropicUnifiedLimits(
+    { sevenDay: { utilization: 0.1, reset: 1793271600 } },
+    { fiveHour: { utilization: 0.05 } },
+  ), { sevenDay: { utilization: 0.1, reset: 1793271600 }, fiveHour: { utilization: 0.05 } });
+});
+
+test('formatProviderLimitsLines combines legacy and unified limits without repeating provider', () => {
+  assert.deepEqual(formatProviderLimitsLines(
+    new Map([['anthropic', { requests: { remaining: 4, limit: 5 } }]]),
+    new Map([['anthropic', { fiveHour: { utilization: 0.05 } }], ['openai', { sevenDay: { utilization: 0 } }]]),
+  ), ['anthropic req 4/5 · 5h:5%', 'openai 7d:0%']);
 });
 
 test('parseOpenAILimits reads complete request and token limits with raw duration resets', () => {
