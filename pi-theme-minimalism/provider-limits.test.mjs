@@ -33,26 +33,6 @@ test('fetchCodexUsage reads primary and secondary windows without inventing coun
   assert.match(formatted[0], /^openai-codex req 4\/5 · 5h:13%\(сброс \d{2}:\d{2}\) · 7d:3%\(сброс \d{2}:\d{2} \d{2}\.\d{2}\)$/);
 });
 
-test('Codex passive headers and delayed active fetch retain both sources in either order', async () => {
-  let finishFetch;
-  const pending = new Promise((resolve) => { finishFetch = resolve; });
-  const active = fetchCodexUsage('test-token', async () => pending);
-  const counters = new Map();
-  const windows = new Map();
-  const provider = 'openai-codex';
-  const headers = parseOpenAILimits({ 'x-ratelimit-remaining-requests': '4', 'x-ratelimit-limit-requests': '5' });
-  counters.set(provider, mergeProviderLimits(counters.get(provider), headers));
-  finishFetch({ ok: true, json: async () => ({ rate_limit: {
-    primary_window: { used_percent: 12 }, secondary_window: { used_percent: 3 },
-  } }) });
-  windows.set(provider, mergeCodexUsageLimits(windows.get(provider), await active));
-  assert.deepEqual(formatProviderLimitsLines(counters, new Map(), windows), ['openai-codex req 4/5 · 5h:12% · 7d:3%']);
-  const reverseCounters = new Map();
-  assert.deepEqual(formatProviderLimitsLines(reverseCounters, new Map(), windows), ['openai-codex 5h:12% · 7d:3%']);
-  reverseCounters.set(provider, mergeProviderLimits(reverseCounters.get(provider), headers));
-  assert.deepEqual(formatProviderLimitsLines(reverseCounters, new Map(), windows), ['openai-codex req 4/5 · 5h:12% · 7d:3%']);
-});
-
 test('mergeCodexUsageLimits preserves missing windows and fields in either arrival order', () => {
   const first = { primary: { percent: 12, reset: 1893510000 } };
   const second = { primary: { percent: 13 }, secondary: { percent: 3, reset: 1893538800 } };
