@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { AssistantMessage } from '@earendil-works/pi-ai';
@@ -47,6 +47,16 @@ export default function (pi: ExtensionAPI) {
       const limits = providerId === 'anthropic' ? parseAnthropicLimits(event.headers)
         : providerId === 'openai' ? parseOpenAILimits(event.headers)
         : parseAnthropicLimits(event.headers) ?? parseOpenAILimits(event.headers);
+      try {
+        const debugDir = join(home, '.pi/agent/pi-theme-minimalism');
+        mkdirSync(debugDir, { recursive: true });
+        appendFileSync(join(debugDir, 'debug-headers.log'), JSON.stringify({
+          timestamp: new Date().toISOString(), providerId, headers: event.headers,
+          limits: limits ?? 'undefined',
+        }) + '\n', { flag: 'a', mode: 0o600 });
+      } catch {
+        // Diagnostic logging must not interrupt provider-limit updates.
+      }
       if (!limits) return;
       limitsByProvider.set(providerId, mergeProviderLimits(limitsByProvider.get(providerId), limits));
       requestWidgetRender?.();
