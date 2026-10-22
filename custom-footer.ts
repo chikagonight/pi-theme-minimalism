@@ -2,8 +2,10 @@ import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { AssistantMessage } from '@earendil-works/pi-ai';
+import { truncateToWidth } from '@earendil-works/pi-tui';
 import type { ExtensionAPI, ThemeColor } from '@earendil-works/pi-coding-agent';
 import { fmt, formatCwd, countEnabledMcpServers, countConnectedMcp, resolveFooterColors, composeFooterLines, FOREGROUND_THEME_TOKENS } from './pi-theme-minimalism/helpers.ts';
+import { parseAnthropicLimits, parseOpenAILimits, mergeProviderLimits, formatProviderLimitsLines, type ProviderLimits } from './pi-theme-minimalism/provider-limits.ts';
 
 const validTokens = new Set(FOREGROUND_THEME_TOKENS);
 
@@ -28,10 +30,42 @@ function readColorConfig(path: string): unknown {
 }
 
 export default function (pi: ExtensionAPI) {
+  let unsubscribeProviderResponse: (() => void) | undefined;
+  pi.on('session_shutdown', () => {
+    unsubscribeProviderResponse?.();
+    unsubscribeProviderResponse = undefined;
+  });
   pi.on('session_start', (_event, ctx) => {
     if (ctx.mode !== 'tui') return;
 
     const home = homedir();
+    const limitsByProvider = new Map<string, ProviderLimits>();
+    let requestWidgetRender: (() => void) | undefined;
+    unsubscribeProviderResponse = pi.on('after_provider_response', (event, responseCtx) => {
+      const providerId = responseCtx.model?.provider;
+      if (!providerId) return;
+      const limits = providerId === 'anthropic' ? parseAnthropicLimits(event.headers)
+        : providerId === 'openai' ? parseOpenAILimits(event.headers)
+        : parseAnthropicLimits(event.headers) ?? parseOpenAILimits(event.headers);
+      if (!limits) return;
+      limitsByProvider.set(providerId, mergeProviderLimits(limitsByProvider.get(providerId), limits));
+      requestWidgetRender?.();
+    });
+    ctx.ui.setWidget('provider-limits', (tui, theme) => {
+      requestWidgetRender = () => tui.requestRender();
+      return {
+        dispose() { requestWidgetRender = undefined; },
+        invalidate() {},
+        render(width: number): string[] {
+          const lines = formatProviderLimitsLines(limitsByProvider);
+          if (lines.length === 0) return [];
+          const colors = resolveFooterColors(readColorConfig(join(home, '.pi/agent/pi-theme-minimalism/colors.json')), validTokens);
+          const color = colors.limitsProvider;
+          return lines.map((line) => truncateToWidth(color.kind === 'token'
+            ? theme.fg(color.token as ThemeColor, line) : theme.style(line, { fg: color.color }), width));
+        },
+      };
+    }, { placement: 'aboveEditor' });
     ctx.ui.setFooter((tui, theme, footerData) => {
       const unsub = footerData.onBranchChange(() => tui.requestRender());
       return {

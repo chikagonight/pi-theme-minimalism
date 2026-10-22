@@ -14,9 +14,9 @@ export const FOREGROUND_THEME_TOKENS: readonly string[] = [
   'thinkingMedium', 'thinkingHigh', 'thinkingXhigh', 'thinkingMax', 'bashMode',
 ];
 
-export type FooterColorKey = 'cwd' | 'branch' | 'model' | 'tokens' | 'context' | 'mcpOk' | 'mcpBad';
+export type FooterColorKey = 'cwd' | 'branch' | 'model' | 'tokens' | 'context' | 'mcpOk' | 'mcpBad' | 'limitsProvider';
 export const DEFAULT_FOOTER_COLORS: Record<FooterColorKey, string> = {
-  cwd: 'dim', branch: 'dim', model: 'accent', tokens: 'dim', context: 'dim', mcpOk: 'success', mcpBad: 'error',
+  cwd: 'dim', branch: 'dim', model: 'accent', tokens: 'dim', context: 'dim', mcpOk: 'success', mcpBad: 'error', limitsProvider: 'dim',
 };
 
 type ResolvedColor = { kind: 'token'; token: string } | { kind: 'hex'; color: Color };
