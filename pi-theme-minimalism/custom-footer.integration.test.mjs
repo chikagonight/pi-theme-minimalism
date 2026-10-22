@@ -15,7 +15,7 @@ const { default: customFooter } = await import('../custom-footer.ts');
 hooks.deregister();
 
 const headers = { 'x-ratelimit-remaining-requests': '4', 'x-ratelimit-limit-requests': '5' };
-const expected = ['openai-codex req 4/5 · 5h:12% · 7d:3%'];
+const expected = ['openai-codex req 4/5 · 5h|█░░░░|12%|-||wk|░░░░░|3%|-'];
 
 function startFooter() {
   const handlers = new Map();
@@ -65,7 +65,7 @@ for (const headersFirst of [true, false]) {
       } }) });
       await new Promise((resolve) => setImmediate(resolve));
       if (!headersFirst) {
-        assert.deepEqual(footer.lines(), ['openai-codex 5h:12% · 7d:3%']);
+        assert.deepEqual(footer.lines(), ['openai-codex 5h|█░░░░|12%|-||wk|░░░░░|3%|-']);
         footer.headers();
       }
       assert.deepEqual(footer.lines(), expected);

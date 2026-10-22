@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { parseAnthropicLimits, parseAnthropicUnifiedLimits, parseOpenAILimits, mergeProviderLimits, mergeAnthropicUnifiedLimits, mergeCodexUsageLimits, formatProviderLimitsLines, formatUnifiedLimitsLine, fetchAnthropicUsage, fetchCodexUsage } from './provider-limits.ts';
+import { parseAnthropicLimits, parseAnthropicUnifiedLimits, parseOpenAILimits, mergeProviderLimits, mergeAnthropicUnifiedLimits, mergeCodexUsageLimits, formatProviderLimitsLines, formatUnifiedLimitsLine, formatCodexLimitsLine, fetchAnthropicUsage, fetchCodexUsage } from './provider-limits.ts';
 
 const mockFetch = (body, status = 200) => async (url, options) => {
   assert.equal(options.method, 'GET');
@@ -29,8 +29,8 @@ test('fetchCodexUsage reads primary and secondary windows without inventing coun
     secondary_window: { used_percent: 3, reset_at: 1893538800 },
   } }));
   assert.deepEqual(result, { primary: { percent: 12.5, reset: 1893510000 }, secondary: { percent: 3, reset: 1893538800 } });
-  const formatted = formatProviderLimitsLines(new Map([['openai-codex', { requests: { remaining: 4, limit: 5 } }]]), new Map(), new Map([['openai-codex', result]]));
-  assert.match(formatted[0], /^openai-codex req 4\/5 · 5h:13%\(сброс \d{2}:\d{2}\) · 7d:3%\(сброс \d{2}:\d{2} \d{2}\.\d{2}\)$/);
+  const formatted = formatProviderLimitsLines(new Map([['openai-codex', { requests: { remaining: 4, limit: 5 } }]]), new Map(), new Map([['openai-codex', result]]), 1893506400);
+  assert.deepEqual(formatted, ['openai-codex req 4/5 · 5h|█░░░░|13%|1h0m||wk|░░░░░|3%|9h0m']);
 });
 
 test('mergeCodexUsageLimits preserves missing windows and fields in either arrival order', () => {
@@ -51,8 +51,8 @@ test('Codex duration reset and active-only provider lines', async () => {
     const usage = await fetchCodexUsage('test-token', mockFetch({ rate_limit: { primary_window: { used_percent: 0, reset_after_seconds: 60 } } }));
     assert.deepEqual(usage, { primary: { percent: 0, reset: 1893510060 } });
     const lines = formatProviderLimitsLines(new Map(), new Map([['anthropic', { fiveHour: { utilization: 0.05 } }]]), new Map([['openai-codex', usage]]));
-    assert.equal(lines[0], 'anthropic 5h:5%');
-    assert.match(lines[1], /^openai-codex 5h:0%\(сброс \d{2}:\d{2}\)$/);
+    assert.equal(lines[0], 'anthropic 5h|░░░░░|5%|-');
+    assert.equal(lines[1], 'openai-codex 5h|░░░░░|0%|1m');
   } finally { Date.now = originalNow; }
 });
 
@@ -188,17 +188,26 @@ test('parseAnthropicUnifiedLimits skips an invalid reset window but retains the 
   }
 });
 
-test('formatUnifiedLimitsLine formats local reset time, and date only for a different day', () => {
-  const today = new Date();
-  const todayReset = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 15, 0).getTime() / 1000;
-  const laterReset = new Date(2040, 9, 23, 15, 0).getTime() / 1000;
-  assert.equal(formatUnifiedLimitsLine('anthropic', {
-    fiveHour: { utilization: 0.05, reset: todayReset, status: 'allowed' },
-    sevenDay: { utilization: 0, reset: laterReset, status: 'allowed' },
-  }), 'anthropic 5h:5%(сброс 15:00) 7d:0%(сброс 15:00 23.10)');
-  assert.equal(formatUnifiedLimitsLine('anthropic', { fiveHour: { utilization: 0.25 } }), 'anthropic 5h:25%');
-  assert.equal(formatUnifiedLimitsLine('anthropic', { sevenDay: { utilization: 0 } }), 'anthropic 7d:0%');
-  assert.equal(formatUnifiedLimitsLine('anthropic', {}), '');
+test('usage windows render compact bars and relative resets for both providers', () => {
+  const now = 1900000000;
+  const anthro = { fiveHour: { utilization: 0.18, reset: now + 4 * 3600 + 2 * 60 }, sevenDay: { utilization: 0.02, reset: now + 6 * 86400 + 12 * 3600 } };
+  const codex = { primary: { percent: 18, reset: now + 4 * 3600 + 2 * 60 }, secondary: { percent: 2, reset: now + 6 * 86400 + 12 * 3600 } };
+  const expected = '5h|█░░░░|18%|4h2m||wk|░░░░░|2%|6d';
+  assert.equal(formatUnifiedLimitsLine('anthropic', anthro, now), `anthropic ${expected}`);
+  assert.equal(formatCodexLimitsLine('openai-codex', codex, now), `openai-codex ${expected}`);
+  assert.deepEqual(formatProviderLimitsLines(new Map(), new Map([['anthropic', anthro]]), new Map([['openai-codex', codex]]), now), [`anthropic ${expected}`, `openai-codex ${expected}`]);
+});
+
+test('single windows, rounding, zero/full bars, and missing or elapsed resets', () => {
+  const now = 1900000000;
+  assert.equal(formatUnifiedLimitsLine('anthropic', { fiveHour: { utilization: 0, reset: now + 59 * 60 + 59 } }, now), 'anthropic 5h|░░░░░|0%|59m');
+  assert.equal(formatUnifiedLimitsLine('anthropic', { sevenDay: { utilization: 1, reset: now + 86400 } }, now), 'anthropic wk|█████|100%|1d');
+  assert.equal(formatCodexLimitsLine('openai-codex', { primary: { percent: 99.5, reset: now + 3600 } }, now), 'openai-codex 5h|█████|100%|1h0m');
+  assert.equal(formatCodexLimitsLine('openai-codex', { secondary: { percent: 0, reset: now - 10 } }, now), 'openai-codex wk|░░░░░|0%|0m');
+  assert.equal(formatUnifiedLimitsLine('anthropic', { fiveHour: { utilization: 0.25 } }, now), 'anthropic 5h|█░░░░|25%|-');
+  assert.equal(formatCodexLimitsLine('openai-codex', { secondary: { percent: 20 } }, now), 'openai-codex wk|█░░░░|20%|-');
+  assert.equal(formatUnifiedLimitsLine('anthropic', {}, now), '');
+  assert.equal(formatCodexLimitsLine('openai-codex', {}, now), '');
 });
 
 test('mergeAnthropicUnifiedLimits retains the other window across partial responses', () => {
@@ -212,7 +221,7 @@ test('formatProviderLimitsLines combines legacy and unified limits without repea
   assert.deepEqual(formatProviderLimitsLines(
     new Map([['anthropic', { requests: { remaining: 4, limit: 5 } }]]),
     new Map([['anthropic', { fiveHour: { utilization: 0.05 } }], ['openai', { sevenDay: { utilization: 0 } }]]),
-  ), ['anthropic req 4/5 · 5h:5%', 'openai 7d:0%']);
+  ), ['anthropic req 4/5 · 5h|░░░░░|5%|-', 'openai wk|░░░░░|0%|-']);
 });
 
 test('parseOpenAILimits reads complete request and token limits with raw duration resets', () => {

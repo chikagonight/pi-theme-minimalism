@@ -121,22 +121,35 @@ export function mergeCodexUsageLimits(previous: CodexUsageLimits | undefined, ne
   };
 }
 
-export function formatUnifiedLimitsLine(provider: string, limits: AnthropicUnifiedLimits): string {
-  const today = new Date();
+export function renderBar(percent: number, width = 5): string {
+  const filled = Math.round(percent / 100 * width);
+  return '█'.repeat(filled) + '░'.repeat(width - filled);
+}
+
+export function formatDurationUntil(resetUnixSeconds: number, nowUnixSeconds: number): string {
+  const minutes = Math.floor(Math.max(0, resetUnixSeconds - nowUnixSeconds) / 60);
+  if (minutes >= 1440) return `${Math.floor(minutes / 1440)}d`;
+  if (minutes >= 60) return `${Math.floor(minutes / 60)}h${minutes % 60}m`;
+  return `${minutes}m`;
+}
+
+function formatUsageWindow(label: string, percent: number, reset: number | undefined, now: number): string {
+  const rounded = Math.round(percent);
+  return `${label}|${renderBar(rounded)}|${rounded}%|${reset === undefined ? '-' : formatDurationUntil(reset, now)}`;
+}
+
+export function formatUnifiedLimitsLine(provider: string, limits: AnthropicUnifiedLimits, now = Date.now() / 1000): string {
   const windows: string[] = [];
-  for (const [label, window] of [['5h', limits.fiveHour], ['7d', limits.sevenDay]] as const) {
-    if (!window) continue;
-    let text = `${label}:${Math.round(window.utilization * 100)}%`;
-    if (window.reset !== undefined) {
-      const date = new Date(window.reset * 1000);
-      const pad = (value: number) => String(value).padStart(2, '0');
-      const time = `${pad(date.getHours())}:${pad(date.getMinutes())}`;
-      const sameDay = date.getFullYear() === today.getFullYear() && date.getMonth() === today.getMonth() && date.getDate() === today.getDate();
-      text += `(сброс ${time}${label === '7d' && !sameDay ? ` ${pad(date.getDate())}.${pad(date.getMonth() + 1)}` : ''})`;
-    }
-    windows.push(text);
-  }
-  return windows.length ? `${provider} ${windows.join(' ')}` : '';
+  if (limits.fiveHour) windows.push(formatUsageWindow('5h', limits.fiveHour.utilization * 100, limits.fiveHour.reset, now));
+  if (limits.sevenDay) windows.push(formatUsageWindow('wk', limits.sevenDay.utilization * 100, limits.sevenDay.reset, now));
+  return windows.length ? `${provider} ${windows.join('||')}` : '';
+}
+
+export function formatCodexLimitsLine(provider: string, limits: CodexUsageLimits, now = Date.now() / 1000): string {
+  const windows: string[] = [];
+  if (limits.primary) windows.push(formatUsageWindow('5h', limits.primary.percent, limits.primary.reset, now));
+  if (limits.secondary) windows.push(formatUsageWindow('wk', limits.secondary.percent, limits.secondary.reset, now));
+  return windows.length ? `${provider} ${windows.join('||')}` : '';
 }
 
 function parseCounter(headers: Record<string, string>, remainingKey: string, limitKey: string, resetKey: string): ProviderLimits['requests'] {
@@ -171,7 +184,7 @@ export function mergeProviderLimits(previous: ProviderLimits | undefined, next: 
   };
 }
 
-export function formatProviderLimitsLines(limitsByProvider: Map<string, ProviderLimits>, unifiedByProvider: Map<string, AnthropicUnifiedLimits> = new Map(), codexByProvider: Map<string, CodexUsageLimits> = new Map()): string[] {
+export function formatProviderLimitsLines(limitsByProvider: Map<string, ProviderLimits>, unifiedByProvider: Map<string, AnthropicUnifiedLimits> = new Map(), codexByProvider: Map<string, CodexUsageLimits> = new Map(), now = Date.now() / 1000): string[] {
   const lines: string[] = [];
   for (const provider of new Set([...limitsByProvider.keys(), ...unifiedByProvider.keys(), ...codexByProvider.keys()])) {
     const limits = limitsByProvider.get(provider);
@@ -179,14 +192,11 @@ export function formatProviderLimitsLines(limitsByProvider: Map<string, Provider
     if (limits?.requests) counters.push(`req ${limits.requests.remaining}/${limits.requests.limit}`);
     if (limits?.tokens) counters.push(`tok ${limits.tokens.remaining}/${limits.tokens.limit}`);
     const unified = unifiedByProvider.get(provider);
-    const unifiedLine = unified ? formatUnifiedLimitsLine(provider, unified) : '';
+    const unifiedLine = unified ? formatUnifiedLimitsLine(provider, unified, now) : '';
     if (unifiedLine) counters.push(unifiedLine.slice(provider.length + 1));
     const codex = codexByProvider.get(provider);
-    for (const [label, window] of [['5h', codex?.primary], ['7d', codex?.secondary]] as const) {
-      if (!window) continue;
-      const formatted = formatUnifiedLimitsLine(provider, { [label === '5h' ? 'fiveHour' : 'sevenDay']: { utilization: window.percent / 100, reset: window.reset } });
-      counters.push(formatted.slice(provider.length + 1));
-    }
+    const codexLine = codex ? formatCodexLimitsLine(provider, codex, now) : '';
+    if (codexLine) counters.push(codexLine.slice(provider.length + 1));
     if (counters.length) lines.push(`${provider} ${counters.join(' · ')}`);
   }
   return lines;
