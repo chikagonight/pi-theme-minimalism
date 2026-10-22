@@ -198,6 +198,11 @@ test('usage windows render compact bars and relative resets for both providers',
   assert.deepEqual(formatProviderLimitsLines(new Map(), new Map([['anthropic', anthro]]), new Map([['openai-codex', codex]]), now), [`anthropic ${expected}`, `openai-codex ${expected}`]);
 });
 
+test('fractional usage fills bars before rounding the displayed percentage', () => {
+  assert.equal(formatCodexLimitsLine('openai-codex', { primary: { percent: 29.6 } }), 'openai-codex 5h|█░░░░|30%|-');
+  assert.equal(formatUnifiedLimitsLine('anthropic', { fiveHour: { utilization: 0.296 } }), 'anthropic 5h|█░░░░|30%|-');
+});
+
 test('single windows, rounding, zero/full bars, and missing or elapsed resets', () => {
   const now = 1900000000;
   assert.equal(formatUnifiedLimitsLine('anthropic', { fiveHour: { utilization: 0, reset: now + 59 * 60 + 59 } }, now), 'anthropic 5h|░░░░░|0%|59m');

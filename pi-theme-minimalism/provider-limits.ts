@@ -134,8 +134,7 @@ export function formatDurationUntil(resetUnixSeconds: number, nowUnixSeconds: nu
 }
 
 function formatUsageWindow(label: string, percent: number, reset: number | undefined, now: number): string {
-  const rounded = Math.round(percent);
-  return `${label}|${renderBar(rounded)}|${rounded}%|${reset === undefined ? '-' : formatDurationUntil(reset, now)}`;
+  return `${label}|${renderBar(percent)}|${Math.round(percent)}%|${reset === undefined ? '-' : formatDurationUntil(reset, now)}`;
 }
 
 export function formatUnifiedLimitsLine(provider: string, limits: AnthropicUnifiedLimits, now = Date.now() / 1000): string {
