@@ -5,7 +5,7 @@ import type { AssistantMessage } from '@earendil-works/pi-ai';
 import { truncateToWidth } from '@earendil-works/pi-tui';
 import { readStoredCredential, type ExtensionAPI, type ThemeColor } from '@earendil-works/pi-coding-agent';
 import { fmt, formatCwd, countEnabledMcpServers, countConnectedMcp, resolveFooterColors, composeFooterLines, FOREGROUND_THEME_TOKENS } from './pi-theme-minimalism/helpers.ts';
-import { parseAnthropicLimits, parseAnthropicUnifiedLimits, parseOpenAILimits, mergeProviderLimits, mergeAnthropicUnifiedLimits, mergeCodexUsageLimits, formatProviderLimitsLines, fetchAnthropicUsage, fetchCodexUsage, type ProviderLimits, type AnthropicUnifiedLimits, type CodexUsageLimits } from './pi-theme-minimalism/provider-limits.ts';
+import { parseAnthropicLimits, parseAnthropicUnifiedLimits, parseOpenAILimits, mergeProviderLimits, mergeAnthropicUnifiedLimits, mergeCodexUsageLimits, formatProviderLimitsSegments, fetchAnthropicUsage, fetchCodexUsage, type ProviderLimits, type AnthropicUnifiedLimits, type CodexUsageLimits } from './pi-theme-minimalism/provider-limits.ts';
 
 const validTokens = new Set(FOREGROUND_THEME_TOKENS);
 
@@ -88,12 +88,14 @@ export default function (pi: ExtensionAPI) {
         dispose() { requestWidgetRender = undefined; },
         invalidate() {},
         render(width: number): string[] {
-          const lines = formatProviderLimitsLines(limitsByProvider, unifiedByProvider, codexByProvider);
-          if (lines.length === 0) return [];
+          const segments = formatProviderLimitsSegments(limitsByProvider, unifiedByProvider, codexByProvider);
+          if (segments.length === 0) return [];
           const colors = resolveFooterColors(readColorConfig(join(home, '.pi/agent/pi-theme-minimalism/colors.json')), validTokens);
-          const color = colors.limitsProvider;
-          return lines.map((line) => truncateToWidth(color.kind === 'token'
-            ? theme.fg(color.token as ThemeColor, line) : theme.style(line, { fg: color.color }), width));
+          const line = segments.map(({ provider, text }) => {
+            const color = colors[provider === 'anthropic' ? 'limitsAnthropic' : provider === 'openai-codex' ? 'limitsCodex' : 'limitsProvider'];
+            return color.kind === 'token' ? theme.fg(color.token as ThemeColor, text) : theme.style(text, { fg: color.color });
+          }).join('  ');
+          return [truncateToWidth(line, width)];
         },
       };
     }, { placement: 'aboveEditor' });

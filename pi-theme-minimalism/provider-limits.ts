@@ -183,8 +183,8 @@ export function mergeProviderLimits(previous: ProviderLimits | undefined, next: 
   };
 }
 
-export function formatProviderLimitsLines(limitsByProvider: Map<string, ProviderLimits>, unifiedByProvider: Map<string, AnthropicUnifiedLimits> = new Map(), codexByProvider: Map<string, CodexUsageLimits> = new Map(), now = Date.now() / 1000): string[] {
-  const lines: string[] = [];
+export function formatProviderLimitsSegments(limitsByProvider: Map<string, ProviderLimits>, unifiedByProvider: Map<string, AnthropicUnifiedLimits> = new Map(), codexByProvider: Map<string, CodexUsageLimits> = new Map(), now = Date.now() / 1000): { provider: string; text: string }[] {
+  const segments: { provider: string; text: string }[] = [];
   for (const provider of new Set([...limitsByProvider.keys(), ...unifiedByProvider.keys(), ...codexByProvider.keys()])) {
     const limits = limitsByProvider.get(provider);
     const counters: string[] = [];
@@ -196,7 +196,7 @@ export function formatProviderLimitsLines(limitsByProvider: Map<string, Provider
     const codex = codexByProvider.get(provider);
     const codexLine = codex ? formatCodexLimitsLine(provider, codex, now) : '';
     if (codexLine) counters.push(codexLine.slice(provider.length + 1));
-    if (counters.length) lines.push(`${provider} ${counters.join(' · ')}`);
+    if (counters.length) segments.push({ provider, text: `${provider} ${counters.join(' · ')}` });
   }
-  return lines;
+  return segments;
 }

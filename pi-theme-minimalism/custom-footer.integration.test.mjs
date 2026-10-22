@@ -17,7 +17,7 @@ hooks.deregister();
 const headers = { 'x-ratelimit-remaining-requests': '4', 'x-ratelimit-limit-requests': '5' };
 const expected = ['openai-codex req 4/5 · 5h|█░░░░|12%|-||wk|░░░░░|3%|-'];
 
-function startFooter() {
+function startFooter(theme = { fg: (_token, text) => text, style: (text) => text }) {
   const handlers = new Map();
   let widgetFactory;
   const pi = {
@@ -35,13 +35,33 @@ function startFooter() {
     },
   });
   assert.equal(typeof widgetFactory, 'function');
-  const widget = widgetFactory({ requestRender() {} }, { fg: (_token, text) => text, style: (text) => text });
+  const widget = widgetFactory({ requestRender() {} }, theme);
   return {
-    headers: () => handlers.get('after_provider_response')({ headers }, { model: { provider: 'openai-codex' } }),
+    headers: (provider = 'openai-codex', responseHeaders = headers) => handlers.get('after_provider_response')({ headers: responseHeaders }, { model: { provider } }),
     lines: () => widget.render(120),
     shutdown: () => handlers.get('session_shutdown')(),
   };
 }
+
+test('provider widget renders one line with provider-specific colors and dim fallback', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: false });
+  try {
+    const theme = {
+      fg: (token, text) => `<${token}>${text}</${token}>`,
+      style: (text, { fg }) => `<${fg.r},${fg.g},${fg.b}>${text}</color>`,
+    };
+    const footer = startFooter(theme);
+    try {
+      assert.deepEqual(footer.lines(), []);
+      footer.headers('anthropic', { 'anthropic-ratelimit-requests-remaining': '2', 'anthropic-ratelimit-requests-limit': '5' });
+      assert.deepEqual(footer.lines(), ['<217,119,87>anthropic req 2/5</color>']);
+      footer.headers('openai-codex');
+      footer.headers('zai', { 'x-ratelimit-remaining-requests': '1', 'x-ratelimit-limit-requests': '3' });
+      assert.deepEqual(footer.lines(), ['<217,119,87>anthropic req 2/5</color>  <74,144,226>openai-codex req 4/5</color>  <dim>zai req 1/3</dim>']);
+    } finally { footer.shutdown(); }
+  } finally { globalThis.fetch = originalFetch; }
+});
 
 for (const headersFirst of [true, false]) {
   test(`Codex session_start and after_provider_response merge when ${headersFirst ? 'headers precede fetch' : 'fetch precedes headers'}`, async () => {

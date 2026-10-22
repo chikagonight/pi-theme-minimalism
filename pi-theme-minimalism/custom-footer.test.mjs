@@ -107,9 +107,20 @@ test('resolveColorValue accepts foreground tokens and hex, rejects other values'
   }
 });
 
+test('resolveFooterColors resolves provider defaults and configured overrides', () => {
+  const tokens = new Set(['dim', 'success', 'error', 'accent']);
+  const defaults = resolveFooterColors(undefined, tokens);
+  assert.deepEqual(defaults.limitsAnthropic, { kind: 'hex', color: { kind: 'rgb', r: 217, g: 119, b: 87 } });
+  assert.deepEqual(defaults.limitsCodex, { kind: 'hex', color: { kind: 'rgb', r: 74, g: 144, b: 226 } });
+  assert.deepEqual(defaults.limitsProvider, { kind: 'token', token: 'dim' });
+  const overrides = resolveFooterColors({ limitsAnthropic: 'accent', limitsCodex: '#123456' }, tokens);
+  assert.deepEqual(overrides.limitsAnthropic, { kind: 'token', token: 'accent' });
+  assert.deepEqual(overrides.limitsCodex, { kind: 'hex', color: { kind: 'rgb', r: 18, g: 52, b: 86 } });
+});
+
 test('resolveFooterColors uses defaults for missing and invalid configs', () => {
   const tokens = new Set(['dim', 'success', 'error', 'accent']);
-  const defaults = Object.fromEntries(Object.entries(DEFAULT_FOOTER_COLORS).map(([key, token]) => [key, { kind: 'token', token }]));
+  const defaults = Object.fromEntries(Object.entries(DEFAULT_FOOTER_COLORS).map(([key, value]) => [key, resolveColorValue(value, tokens)]));
   assert.deepEqual(resolveFooterColors(undefined, tokens), defaults);
   assert.deepEqual(resolveFooterColors({}, tokens), defaults);
   for (const raw of [null, [], 'dim']) {
@@ -119,7 +130,7 @@ test('resolveFooterColors uses defaults for missing and invalid configs', () => 
 
 test('resolveFooterColors applies each valid field independently', () => {
   const tokens = new Set(['dim', 'success', 'error', 'accent']);
-  const defaults = Object.fromEntries(Object.entries(DEFAULT_FOOTER_COLORS).map(([key, token]) => [key, { kind: 'token', token }]));
+  const defaults = Object.fromEntries(Object.entries(DEFAULT_FOOTER_COLORS).map(([key, value]) => [key, resolveColorValue(value, tokens)]));
   const red = { kind: 'hex', color: { kind: 'rgb', r: 255, g: 0, b: 0 } };
   assert.deepEqual(resolveFooterColors({ model: '#ff0000' }, tokens), { ...defaults, model: red });
   assert.deepEqual(resolveFooterColors({ mcpOk: '#ff0000' }, tokens), { ...defaults, mcpOk: red });

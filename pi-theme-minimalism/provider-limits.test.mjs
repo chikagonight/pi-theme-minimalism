@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { parseAnthropicLimits, parseAnthropicUnifiedLimits, parseOpenAILimits, mergeProviderLimits, mergeAnthropicUnifiedLimits, mergeCodexUsageLimits, formatProviderLimitsLines, formatUnifiedLimitsLine, formatCodexLimitsLine, fetchAnthropicUsage, fetchCodexUsage } from './provider-limits.ts';
+import { parseAnthropicLimits, parseAnthropicUnifiedLimits, parseOpenAILimits, mergeProviderLimits, mergeAnthropicUnifiedLimits, mergeCodexUsageLimits, formatProviderLimitsSegments, formatUnifiedLimitsLine, formatCodexLimitsLine, fetchAnthropicUsage, fetchCodexUsage } from './provider-limits.ts';
 
 const mockFetch = (body, status = 200) => async (url, options) => {
   assert.equal(options.method, 'GET');
@@ -29,8 +29,8 @@ test('fetchCodexUsage reads primary and secondary windows without inventing coun
     secondary_window: { used_percent: 3, reset_at: 1893538800 },
   } }));
   assert.deepEqual(result, { primary: { percent: 12.5, reset: 1893510000 }, secondary: { percent: 3, reset: 1893538800 } });
-  const formatted = formatProviderLimitsLines(new Map([['openai-codex', { requests: { remaining: 4, limit: 5 } }]]), new Map(), new Map([['openai-codex', result]]), 1893506400);
-  assert.deepEqual(formatted, ['openai-codex req 4/5 · 5h|█░░░░|13%|1h0m||wk|░░░░░|3%|9h0m']);
+  const formatted = formatProviderLimitsSegments(new Map([['openai-codex', { requests: { remaining: 4, limit: 5 } }]]), new Map(), new Map([['openai-codex', result]]), 1893506400);
+  assert.deepEqual(formatted, [{ provider: 'openai-codex', text: 'openai-codex req 4/5 · 5h|█░░░░|13%|1h0m||wk|░░░░░|3%|9h0m' }]);
 });
 
 test('mergeCodexUsageLimits preserves missing windows and fields in either arrival order', () => {
@@ -50,9 +50,11 @@ test('Codex duration reset and active-only provider lines', async () => {
   try {
     const usage = await fetchCodexUsage('test-token', mockFetch({ rate_limit: { primary_window: { used_percent: 0, reset_after_seconds: 60 } } }));
     assert.deepEqual(usage, { primary: { percent: 0, reset: 1893510060 } });
-    const lines = formatProviderLimitsLines(new Map(), new Map([['anthropic', { fiveHour: { utilization: 0.05 } }]]), new Map([['openai-codex', usage]]));
-    assert.equal(lines[0], 'anthropic 5h|░░░░░|5%|-');
-    assert.equal(lines[1], 'openai-codex 5h|░░░░░|0%|1m');
+    const lines = formatProviderLimitsSegments(new Map(), new Map([['anthropic', { fiveHour: { utilization: 0.05 } }]]), new Map([['openai-codex', usage]]));
+    assert.deepEqual(lines, [
+      { provider: 'anthropic', text: 'anthropic 5h|░░░░░|5%|-' },
+      { provider: 'openai-codex', text: 'openai-codex 5h|░░░░░|0%|1m' },
+    ]);
   } finally { Date.now = originalNow; }
 });
 
@@ -195,7 +197,7 @@ test('usage windows render compact bars and relative resets for both providers',
   const expected = '5h|█░░░░|18%|4h2m||wk|░░░░░|2%|6d';
   assert.equal(formatUnifiedLimitsLine('anthropic', anthro, now), `anthropic ${expected}`);
   assert.equal(formatCodexLimitsLine('openai-codex', codex, now), `openai-codex ${expected}`);
-  assert.deepEqual(formatProviderLimitsLines(new Map(), new Map([['anthropic', anthro]]), new Map([['openai-codex', codex]]), now), [`anthropic ${expected}`, `openai-codex ${expected}`]);
+  assert.deepEqual(formatProviderLimitsSegments(new Map(), new Map([['anthropic', anthro]]), new Map([['openai-codex', codex]]), now), [{ provider: 'anthropic', text: `anthropic ${expected}` }, { provider: 'openai-codex', text: `openai-codex ${expected}` }]);
 });
 
 test('fractional usage fills bars before rounding the displayed percentage', () => {
@@ -222,11 +224,11 @@ test('mergeAnthropicUnifiedLimits retains the other window across partial respon
   ), { sevenDay: { utilization: 0.1, reset: 1793271600 }, fiveHour: { utilization: 0.05 } });
 });
 
-test('formatProviderLimitsLines combines legacy and unified limits without repeating provider', () => {
-  assert.deepEqual(formatProviderLimitsLines(
+test('formatProviderLimitsSegments combines legacy and unified limits without repeating provider', () => {
+  assert.deepEqual(formatProviderLimitsSegments(
     new Map([['anthropic', { requests: { remaining: 4, limit: 5 } }]]),
     new Map([['anthropic', { fiveHour: { utilization: 0.05 } }], ['openai', { sevenDay: { utilization: 0 } }]]),
-  ), ['anthropic req 4/5 · 5h|░░░░░|5%|-', 'openai wk|░░░░░|0%|-']);
+  ), [{ provider: 'anthropic', text: 'anthropic req 4/5 · 5h|░░░░░|5%|-' }, { provider: 'openai', text: 'openai wk|░░░░░|0%|-' }]);
 });
 
 test('parseOpenAILimits reads complete request and token limits with raw duration resets', () => {
@@ -327,38 +329,38 @@ test('mergeProviderLimits uses next unchanged when no previous entry exists', ()
   assert.strictEqual(mergeProviderLimits(undefined, next), next);
 });
 
-test('formatProviderLimitsLines hides an empty map', () => {
-  assert.deepEqual(formatProviderLimitsLines(new Map()), []);
+test('formatProviderLimitsSegments hides an empty map', () => {
+  assert.deepEqual(formatProviderLimitsSegments(new Map()), []);
 });
 
-test('formatProviderLimitsLines formats a provider with requests only', () => {
-  assert.deepEqual(formatProviderLimitsLines(new Map([
+test('formatProviderLimitsSegments formats a provider with requests only', () => {
+  assert.deepEqual(formatProviderLimitsSegments(new Map([
     ['anthropic', { requests: { remaining: 42, limit: 50 } }],
-  ])), ['anthropic req 42/50']);
+  ])), [{ provider: 'anthropic', text: 'anthropic req 42/50' }]);
 });
 
-test('formatProviderLimitsLines formats a provider with tokens only', () => {
-  assert.deepEqual(formatProviderLimitsLines(new Map([
+test('formatProviderLimitsSegments formats a provider with tokens only', () => {
+  assert.deepEqual(formatProviderLimitsSegments(new Map([
     ['openai', { tokens: { remaining: 180000, limit: 200000 } }],
-  ])), ['openai tok 180000/200000']);
+  ])), [{ provider: 'openai', text: 'openai tok 180000/200000' }]);
 });
 
-test('formatProviderLimitsLines preserves map order, provider casing and both counters', () => {
-  assert.deepEqual(formatProviderLimitsLines(new Map([
+test('formatProviderLimitsSegments preserves map order, provider casing and both counters', () => {
+  assert.deepEqual(formatProviderLimitsSegments(new Map([
     ['OpenAI', { requests: { remaining: 4, limit: 5 }, tokens: { remaining: 800, limit: 1000 } }],
     ['anthropic', { requests: { remaining: 42, limit: 50 }, tokens: { remaining: 180000, limit: 200000 } }],
     ['openrouter', { requests: { remaining: 1, limit: 10 } }],
   ])), [
-    'OpenAI req 4/5 · tok 800/1000',
-    'anthropic req 42/50 · tok 180000/200000',
-    'openrouter req 1/10',
+    { provider: 'OpenAI', text: 'OpenAI req 4/5 · tok 800/1000' },
+    { provider: 'anthropic', text: 'anthropic req 42/50 · tok 180000/200000' },
+    { provider: 'openrouter', text: 'openrouter req 1/10' },
   ]);
 });
 
-test('formatProviderLimitsLines skips a provider without counters', () => {
-  assert.deepEqual(formatProviderLimitsLines(new Map([
+test('formatProviderLimitsSegments skips a provider without counters', () => {
+  assert.deepEqual(formatProviderLimitsSegments(new Map([
     ['empty', {}],
     ['openai', { requests: { remaining: 4, limit: 5 } }],
-  ])), ['openai req 4/5']);
-  assert.deepEqual(formatProviderLimitsLines(new Map([['empty', {}]])), []);
+  ])), [{ provider: 'openai', text: 'openai req 4/5' }]);
+  assert.deepEqual(formatProviderLimitsSegments(new Map([['empty', {}]])), []);
 });

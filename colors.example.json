@@ -6,5 +6,7 @@
   "context": "muted",
   "mcpOk": "success",
   "mcpBad": "error",
-  "limitsProvider": "dim"
+  "limitsProvider": "dim",
+  "limitsAnthropic": "#D97757",
+  "limitsCodex": "#4A90E2"
 }
