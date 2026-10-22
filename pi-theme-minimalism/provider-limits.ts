@@ -112,6 +112,15 @@ export function mergeAnthropicUnifiedLimits(previous: AnthropicUnifiedLimits | u
   return previous ? { ...previous, ...next } : next;
 }
 
+export function mergeCodexUsageLimits(previous: CodexUsageLimits | undefined, next: CodexUsageLimits): CodexUsageLimits {
+  if (!previous) return next;
+  return {
+    ...previous,
+    ...(next.primary && { primary: { ...previous.primary, ...next.primary } }),
+    ...(next.secondary && { secondary: { ...previous.secondary, ...next.secondary } }),
+  };
+}
+
 export function formatUnifiedLimitsLine(provider: string, limits: AnthropicUnifiedLimits): string {
   const today = new Date();
   const windows: string[] = [];

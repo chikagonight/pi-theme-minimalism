@@ -5,7 +5,7 @@ import type { AssistantMessage } from '@earendil-works/pi-ai';
 import { truncateToWidth } from '@earendil-works/pi-tui';
 import { readStoredCredential, type ExtensionAPI, type ThemeColor } from '@earendil-works/pi-coding-agent';
 import { fmt, formatCwd, countEnabledMcpServers, countConnectedMcp, resolveFooterColors, composeFooterLines, FOREGROUND_THEME_TOKENS } from './pi-theme-minimalism/helpers.ts';
-import { parseAnthropicLimits, parseAnthropicUnifiedLimits, parseOpenAILimits, mergeProviderLimits, mergeAnthropicUnifiedLimits, formatProviderLimitsLines, fetchAnthropicUsage, fetchCodexUsage, type ProviderLimits, type AnthropicUnifiedLimits, type CodexUsageLimits } from './pi-theme-minimalism/provider-limits.ts';
+import { parseAnthropicLimits, parseAnthropicUnifiedLimits, parseOpenAILimits, mergeProviderLimits, mergeAnthropicUnifiedLimits, mergeCodexUsageLimits, formatProviderLimitsLines, fetchAnthropicUsage, fetchCodexUsage, type ProviderLimits, type AnthropicUnifiedLimits, type CodexUsageLimits } from './pi-theme-minimalism/provider-limits.ts';
 
 const validTokens = new Set(FOREGROUND_THEME_TOKENS);
 
@@ -45,7 +45,6 @@ export default function (pi: ExtensionAPI) {
     let requestWidgetRender: (() => void) | undefined;
     // A slow startup request must not replace limits already seen in a model response.
     let anthropicUpdated = false;
-    let codexUpdated = false;
     const loadUsage = async () => {
       await Promise.all((['anthropic', 'openai-codex'] as const).map(async (provider) => {
         try {
@@ -60,8 +59,8 @@ export default function (pi: ExtensionAPI) {
             }
           } else {
             const usage = await fetchCodexUsage(credential.access);
-            if (usage && !codexUpdated) {
-              codexByProvider.set(provider, usage);
+            if (usage) {
+              codexByProvider.set(provider, mergeCodexUsageLimits(codexByProvider.get(provider), usage));
               requestWidgetRender?.();
             }
           }
@@ -81,7 +80,6 @@ export default function (pi: ExtensionAPI) {
         anthropicUpdated = true;
         unifiedByProvider.set(providerId, mergeAnthropicUnifiedLimits(unifiedByProvider.get(providerId), unified));
       }
-      if (providerId === 'openai-codex' && limits) codexUpdated = true;
       if (limits || unified) requestWidgetRender?.();
     });
     ctx.ui.setWidget('provider-limits', (tui, theme) => {
