@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
-import { fmt, formatCwd, countEnabledMcpServers, countConnectedMcp, parseHexColor, resolveColorValue, resolveFooterColors, DEFAULT_FOOTER_COLORS, FOREGROUND_THEME_TOKENS, composeFooterLines } from './helpers.ts';
+import { fmt, formatCwd, parseMcpConfig, countEnabledMcpServers, countConnectedMcp, parseHexColor, resolveColorValue, resolveFooterColors, DEFAULT_FOOTER_COLORS, FOREGROUND_THEME_TOKENS, composeFooterLines } from './helpers.ts';
 
 test('composeFooterLines preserves the original layout without a center', () => {
   assert.deepEqual(composeFooterLines('left', '', 'right', 16), ['left       right']);
@@ -68,6 +68,17 @@ test('countEnabledMcpServers merges and honors project enabled overrides', () =>
   assert.deepEqual(countEnabledMcpServers(user, project), { total: 3, names: ['beta', 'gamma', 'delta'] });
   assert.deepEqual(countEnabledMcpServers(undefined, undefined), { total: 0, names: [] });
   assert.deepEqual(countEnabledMcpServers({ mcpServers: { beta: { enabled: false } } }, { mcpServers: { beta: {} } }), { total: 0, names: [] });
+});
+
+test('parseMcpConfig accepts valid MCP configs and rejects malformed structures', () => {
+  assert.deepEqual(parseMcpConfig({}), {});
+  assert.deepEqual(parseMcpConfig({ other: 1 }), { other: 1 });
+  const valid = { mcpServers: { alpha: {}, beta: { enabled: false, command: 'x' } } };
+  assert.deepEqual(parseMcpConfig(valid), valid);
+  for (const raw of [undefined, null, [], 'x', 1, { mcpServers: null }, { mcpServers: [] }, { mcpServers: 'alpha' },
+    { mcpServers: { alpha: 1 } }, { mcpServers: { alpha: null } }, { mcpServers: { alpha: [] } }, { mcpServers: { alpha: { enabled: 'no' } } }]) {
+    assert.equal(parseMcpConfig(raw), undefined, JSON.stringify(raw));
+  }
 });
 
 test('countConnectedMcp matches exact normalized namespaces, not substrings or duplicate tools', () => {

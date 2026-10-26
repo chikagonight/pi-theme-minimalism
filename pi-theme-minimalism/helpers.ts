@@ -78,7 +78,22 @@ export function formatCwd(cwd: string, home: string): string {
   return cwd.startsWith(`${home}/`) ? `~${cwd.slice(home.length)}` : cwd;
 }
 
-type McpConfig = { mcpServers?: Record<string, { enabled?: boolean }> };
+export type McpConfig = { mcpServers?: Record<string, { enabled?: boolean }> };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+/** Returns the config if its structure is usable for counting MCP servers, otherwise undefined. */
+export function parseMcpConfig(raw: unknown): McpConfig | undefined {
+  if (!isRecord(raw)) return undefined;
+  if (raw.mcpServers === undefined) return raw as McpConfig;
+  if (!isRecord(raw.mcpServers)) return undefined;
+  for (const server of Object.values(raw.mcpServers)) {
+    if (!isRecord(server) || (server.enabled !== undefined && typeof server.enabled !== 'boolean')) return undefined;
+  }
+  return raw as McpConfig;
+}
 
 export function countEnabledMcpServers(userConfig?: McpConfig, projectConfig?: McpConfig): { total: number; names: string[] } {
   const servers = { ...userConfig?.mcpServers };

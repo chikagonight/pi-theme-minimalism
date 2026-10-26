@@ -364,3 +364,43 @@ test('formatProviderLimitsSegments skips a provider without counters', () => {
   ])), [{ provider: 'openai', text: 'openai req 4/5' }]);
   assert.deepEqual(formatProviderLimitsSegments(new Map([['empty', {}]])), []);
 });
+
+// A fetch that never settles on its own, like a stalled connection; it rejects only when its signal aborts.
+const hangingFetch = (calls) => (url, options) => {
+  calls.push(options.signal);
+  return new Promise((_resolve, reject) => {
+    options.signal?.addEventListener('abort', () => reject(options.signal.reason), { once: true });
+  });
+};
+
+test('usage fetches time out a hung request and abort its signal', async () => {
+  for (const fetcher of [fetchAnthropicUsage, fetchCodexUsage]) {
+    const calls = [];
+    const started = Date.now();
+    assert.equal(await fetcher('test-token', hangingFetch(calls), { timeoutMs: 20 }), undefined);
+    assert.ok(Date.now() - started < 1000);
+    assert.equal(calls.length, 1);
+    assert.ok(calls[0] instanceof AbortSignal);
+    assert.equal(calls[0].aborted, true);
+  }
+});
+
+test('usage fetches stop when the caller signal aborts, even if fetch ignores the signal', async () => {
+  for (const fetcher of [fetchAnthropicUsage, fetchCodexUsage]) {
+    const controller = new AbortController();
+    const pending = fetcher('test-token', () => new Promise(() => {}), { signal: controller.signal, timeoutMs: 60_000 });
+    controller.abort();
+    assert.equal(await pending, undefined);
+    // An already-aborted signal does not start a request.
+    const calls = [];
+    assert.equal(await fetcher('test-token', hangingFetch(calls), { signal: controller.signal }), undefined);
+    assert.equal(calls.length, 0);
+  }
+});
+
+test('usage fetches abort a hung response body', async () => {
+  for (const fetcher of [fetchAnthropicUsage, fetchCodexUsage]) {
+    const result = await fetcher('test-token', async () => ({ ok: true, json: () => new Promise(() => {}) }), { timeoutMs: 20 });
+    assert.equal(result, undefined);
+  }
+});

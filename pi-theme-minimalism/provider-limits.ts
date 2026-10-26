@@ -36,13 +36,34 @@ function anthroWindow(value: unknown, modern: boolean): UnifiedWindow | undefine
   return { utilization: used / 100, ...(reset !== undefined && { reset }), status: 'allowed' };
 }
 
-export async function fetchAnthropicUsage(accessToken: string, fetchImpl: typeof fetch = fetch): Promise<AnthropicUnifiedLimits | undefined> {
+export const USAGE_REQUEST_TIMEOUT_MS = 10_000;
+
+export type UsageRequestOptions = { signal?: AbortSignal; timeoutMs?: number };
+
+/** GETs JSON, bounded by a timeout and the caller's signal; settles on abort even if fetchImpl ignores the signal. */
+async function getJson(url: string, headers: Record<string, string>, fetchImpl: typeof fetch, options: UsageRequestOptions): Promise<unknown> {
+  const timeout = AbortSignal.timeout(options.timeoutMs ?? USAGE_REQUEST_TIMEOUT_MS);
+  const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
+  signal.throwIfAborted();
+  let onAbort: () => void = () => {};
+  const aborted = new Promise<never>((_resolve, reject) => {
+    onAbort = () => reject(signal.reason);
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
   try {
-    const response = await fetchImpl('https://api.anthropic.com/api/oauth/usage', {
-      method: 'GET', headers: { Authorization: `Bearer ${accessToken}`, 'anthropic-beta': 'oauth-2025-04-20' },
-    });
-    if (!response.ok) return undefined;
-    const data = record(await response.json());
+    return await Promise.race([(async () => {
+      const response = await fetchImpl(url, { method: 'GET', headers, signal });
+      return response.ok ? await response.json() : undefined;
+    })(), aborted]);
+  } finally {
+    signal.removeEventListener('abort', onAbort);
+  }
+}
+
+export async function fetchAnthropicUsage(accessToken: string, fetchImpl: typeof fetch = fetch, options: UsageRequestOptions = {}): Promise<AnthropicUnifiedLimits | undefined> {
+  try {
+    const data = record(await getJson('https://api.anthropic.com/api/oauth/usage',
+      { Authorization: `Bearer ${accessToken}`, 'anthropic-beta': 'oauth-2025-04-20' }, fetchImpl, options));
     if (!data) return undefined;
     let fiveHour: UnifiedWindow | undefined;
     let sevenDay: UnifiedWindow | undefined;
@@ -71,13 +92,10 @@ function codexWindow(value: unknown): NonNullable<CodexUsageLimits['primary']> |
   return { percent, ...(reset !== undefined && { reset }) };
 }
 
-export async function fetchCodexUsage(accessToken: string, fetchImpl: typeof fetch = fetch): Promise<CodexUsageLimits | undefined> {
+export async function fetchCodexUsage(accessToken: string, fetchImpl: typeof fetch = fetch, options: UsageRequestOptions = {}): Promise<CodexUsageLimits | undefined> {
   try {
-    const response = await fetchImpl('https://chatgpt.com/backend-api/wham/usage', {
-      method: 'GET', headers: { Authorization: `Bearer ${accessToken}` },
-    });
-    if (!response.ok) return undefined;
-    const limits = record(record(await response.json())?.rate_limit);
+    const data = await getJson('https://chatgpt.com/backend-api/wham/usage', { Authorization: `Bearer ${accessToken}` }, fetchImpl, options);
+    const limits = record(record(data)?.rate_limit);
     const primary = codexWindow(limits?.primary_window);
     const secondary = codexWindow(limits?.secondary_window);
     return primary || secondary ? { ...(primary && { primary }), ...(secondary && { secondary }) } : undefined;
